@@ -389,7 +389,7 @@ class BackupschedulerPlugin(octoprint.plugin.SettingsPlugin,
 
 			# version check: github repository
 			type="github_release",
-			user="jneilliii",
+			user="jescholl",
 			repo="OctoPrint-BackupScheduler",
 			current=self._plugin_version,
 			stable_branch=dict(
@@ -403,7 +403,7 @@ class BackupschedulerPlugin(octoprint.plugin.SettingsPlugin,
 				)
 			],
 			# update method: pip
-			pip="https://github.com/jneilliii/OctoPrint-BackupScheduler/archive/{target_version}.zip"
+			pip="https://github.com/jescholl/OctoPrint-BackupScheduler/archive/{target_version}.zip"
 		)
 
 		return dict(backupscheduler=data)

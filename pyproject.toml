@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "Backup-Scheduler"
-version = "0.3.0"
+version = "0.3.1"
 description = "Schedule OctoPrint backups at regular intervals."
 authors = [
     { name = "jneilliii", email = "jneilliii+github@gmail.com" },
@@ -21,7 +21,7 @@ dynamic = [
 backupscheduler = "octoprint_backupscheduler"
 
 [project.urls]
-Homepage = "https://github.com/jneilliii/OctoPrint-BackupScheduler"
+Homepage = "https://github.com/jescholl/OctoPrint-BackupScheduler"
 
 [project.optional-dependencies]
 develop = [

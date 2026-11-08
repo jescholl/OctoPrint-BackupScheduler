@@ -2,6 +2,7 @@
 from __future__ import absolute_import
 
 import logging
+import time
 from time import sleep
 
 import octoprint.plugin
@@ -127,9 +128,21 @@ class BackupschedulerPlugin(octoprint.plugin.SettingsPlugin,
 					self._logger.debug("Settings updated.")
 					self.on_event("Startup", {})
 			if event in ("PrintFailed", "PrintDone") and self.backup_pending is True:
-				for backup in self.backup_pending_type:
-					self._logger.debug(f"Starting {backup} after print completion.")
-					self._perform_backup(backup_type=backup)
+				# Not on the event thread: _perform_backup waits for the plugin_backup_backup_created
+				# event, which OctoPrint can only deliver once this handler has returned.
+				t = threading.Thread(target=self._perform_pending_backups, name="backupscheduler-pending")
+				t.daemon = True
+				t.start()
+
+	def _perform_pending_backups(self):
+		# PrintDone is fired while the printer is still "Finishing", which counts as printing.
+		end = time.monotonic() + 60
+		while self._printer.is_finishing() and time.monotonic() < end:
+			sleep(0.1)
+		# _perform_backup removes each type from backup_pending_type, so iterate over a copy.
+		for backup in list(self.backup_pending_type):
+			self._logger.debug(f"Starting {backup} after print completion.")
+			self._perform_backup(backup_type=backup)
 
 	def _perform_backup(self, backup_type=None):
 		if self._printer.is_printing():

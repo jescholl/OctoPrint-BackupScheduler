@@ -12,6 +12,7 @@ import socket
 import subprocess
 import sys
 import time
+import zipfile
 
 import pytest
 import requests
@@ -124,8 +125,19 @@ class OctoPrintEnv:
 	def events_seen(self):
 		return self.api("GET", "/api/plugin/backup_trigger").json()["events"]
 
+	def scheduler_status(self):
+		return self.api("GET", "/api/plugin/backup_trigger").json()
+
+	def trigger(self, command, **data):
+		r = self.api("POST", "/api/plugin/backup_trigger", json=dict(command=command, **data))
+		assert r.status_code == 200, r.text
+		return r.json()
+
 	def plugin_setting(self, key):
 		return self.api("GET", "/api/settings").json()["plugins"]["backupscheduler"][key]
+
+	def backup_file(self, name):
+		return self.basedir / "data" / "backup" / name
 
 	def log_text(self):
 		try:
@@ -146,8 +158,14 @@ class OctoPrintEnv:
 def make_env(tmp_path):
 	envs = []
 
-	def factory(hold_print_done=True, **plugin_settings):
+	def factory(hold_print_done=True, seed_backups=(), **plugin_settings):
+		"""seed_backups: names of existing backup zips to create in OctoPrint's backup folder."""
 		env = OctoPrintEnv(tmp_path, plugin_settings, hold_print_done=hold_print_done)
+		for name in seed_backups:
+			path = env.backup_file(name)
+			path.parent.mkdir(parents=True, exist_ok=True)
+			with zipfile.ZipFile(path, "w") as z:
+				z.writestr("seed.txt", "an earlier, good backup")
 		envs.append(env)
 		env.start()
 		return env

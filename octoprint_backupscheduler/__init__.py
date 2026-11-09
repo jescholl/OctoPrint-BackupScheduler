@@ -19,6 +19,21 @@ import smtplib
 from email.mime.text import MIMEText
 from flask_babel import gettext
 
+# How long OctoPrint's backup plugin must have been idle, without our backup having been reported
+# as created, before the backup is considered finished.
+CORE_BACKUP_IDLE_GRACE = 5
+# Used instead when the backup plugin's in-progress state can't be read.
+BACKUP_WAIT_TIMEOUT = 60 * 60
+
+
+def _core_backup_in_progress():
+	"""A callable telling whether OctoPrint's backup plugin is creating a backup, or None if unavailable."""
+	try:
+		from octoprint.plugins.backup import BackupPlugin
+		return BackupPlugin._backup_in_progress.locked
+	except Exception:
+		return None
+
 
 class BackupschedulerPlugin(octoprint.plugin.SettingsPlugin,
 							octoprint.plugin.AssetPlugin,
@@ -36,6 +51,9 @@ class BackupschedulerPlugin(octoprint.plugin.SettingsPlugin,
 		self.current_settings = None
 		self.backup_helpers = None
 		self.creating_backup = False
+		self.backup_failed = False
+		# One backup at a time: creating_backup and backup_failed describe the backup in progress.
+		self._backup_lock = threading.Lock()
 
 	# ~~ SettingsPlugin mixin
 
@@ -216,14 +234,24 @@ class BackupschedulerPlugin(octoprint.plugin.SettingsPlugin,
 			else:
 				return
 
+		with self._backup_lock:
+			self._create_backup(backup_type, exclusions, retention)
+
+	def _create_backup(self, backup_type, exclusions, retention):
 		instance_name = self._settings.global_get(["appearance", "name"]).replace(" ", "-") or "octoprint"
 		backup_filename = "{}-{}-{:%Y%m%d-%H%M%S}.zip".format(instance_name, backup_type.replace("_backups", ""),
 															  datetime.now())
 		self._logger.debug("Performing {} with exclusions: {} as {}.".format(backup_type, exclusions, backup_filename))
+		self.backup_failed = False
 		self.creating_backup = True
 		self.backup_helpers["create_backup"](exclude=exclusions, filename=backup_filename)
-		while self.creating_backup:
-			sleep(1)
+		if not self._wait_for_backup(backup_filename):
+			# Not recorded and no retention, so no good backup is deleted for a failed one.
+			self._logger.warning(f"{backup_type} {backup_filename} failed. It will be retried after the next print.")
+			self.backup_pending = True
+			if backup_type not in self.backup_pending_type:
+				self.backup_pending_type.append(backup_type)
+			return
 		completed_backups = self._settings.get([backup_type])
 		completed_backups.append(backup_filename)
 		# do retention check here and delete older backups
@@ -237,18 +265,52 @@ class BackupschedulerPlugin(octoprint.plugin.SettingsPlugin,
 		self._logger.debug(self._settings.get([backup_type]))
 		self.backup_pending = False
 
+	def _wait_for_backup(self, backup_filename):
+		"""True once the backup was created, False if it failed."""
+		# OctoPrint's backup plugin fires plugin_backup_backup_created on success and calls the after_backup
+		# hook with error=True if writing the zip fails. A failure before that (e.g. not enough free space)
+		# gets neither, so also stop once the backup plugin is idle, and check whether the zip exists.
+		in_progress = _core_backup_in_progress()
+		idle_since = None
+		deadline = time.monotonic() + BACKUP_WAIT_TIMEOUT
+		while True:
+			if not self.creating_backup:
+				return True
+			if self.backup_failed:
+				return False
+			now = time.monotonic()
+			if in_progress is None:
+				if now >= deadline:
+					break
+			elif in_progress():
+				idle_since = None
+			elif idle_since is None:
+				idle_since = now
+			elif now - idle_since >= CORE_BACKUP_IDLE_GRACE:
+				break
+			sleep(1)
+		final_path = os.path.join(self._settings.getBaseFolder("data"), "backup", backup_filename)
+		if os.path.exists(final_path):
+			return True
+		self._notify_backup_failed()
+		return False
+
+	def _notify_backup_failed(self):
+		data = {"notifyTitle": gettext("Backup Failed"),
+				"notifyMessage": gettext(
+					"Something went wrong with the last backup. Please check octoprint.log for possible causes."),
+				"notfiyType": "error", "notifyHide": False}
+		self._sendNotificationToClient(data, True)
+		if self._settings.get_boolean(["send_email", "enabled"]):
+			body = self._loadFileWithPlaceholders("backup_failed.html")
+			self._sendEmailNotification("OctoPrint Backup Failed", body)
+
 	# ~~ BackupPlugin hooks
 
 	def after_backup(self, error):
 		if error:
-			data = {"notifyTitle": gettext("Backup Failed"),
-					"notifyMessage": gettext(
-						"Something went wrong with the last backup. Please check octoprint.log for possible causes."),
-					"notfiyType": "error", "notifyHide": False}
-			self._sendNotificationToClient(data, True)
-			if self._settings.get_boolean(["send_email", "enabled"]):
-				body = self._loadFileWithPlaceholders("backup_failed.html")
-				self._sendEmailNotification("OctoPrint Backup Failed", body)
+			self.backup_failed = True
+			self._notify_backup_failed()
 		else:
 			self._sendNotificationToClient({"notifyTitle": "", "clear_notification": True})
 			self._settings.remove(["notification", "retained_message"])

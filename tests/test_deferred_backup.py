@@ -55,12 +55,19 @@ def assert_events_still_flow(env):
 ])
 def test_backup_deferred_by_a_print_runs_after_it_and_events_keep_flowing(make_env, hold_print_done):
 	env = make_env(hold_print_done=hold_print_done, daily=schedule())
+	env.trigger("slow", seconds=8)
 
 	print_with_deferred_backups(env, ["daily_backups"])
 
+	# Events keep flowing while the backup runs: an event fired now arrives long before the backup ends.
+	seen = len(env.events_seen())
+	r = env.api("POST", "/api/connection", json={"command": "disconnect"})
+	assert r.status_code == 204, r.text
+	assert env.wait_for(lambda: "Disconnected" in env.events_seen()[seen:], timeout=4), env.diagnostics()
+	assert env.plugin_setting("daily_backups") == []
+
 	# The deferred backup completes and is recorded (this needs its backup_created event).
 	assert env.wait_for(lambda: len(env.plugin_setting("daily_backups")) == 1, timeout=60), env.diagnostics()
-	assert_events_still_flow(env)
 
 
 def test_every_deferred_backup_type_runs(make_env):

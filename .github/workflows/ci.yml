@@ -103,6 +103,11 @@ jobs:
           python - <<'EOF'
           from importlib.metadata import entry_points
           (ep,) = [e for e in entry_points(group="octoprint.plugin") if e.name == "backupscheduler"]
-          import octoprint_backupscheduler
-          print("ok", ep.value, octoprint_backupscheduler.__plugin_implementation__)
+          import octoprint_backupscheduler as plugin
+          # What OctoPrint does after importing: the check, then __plugin_load__, which creates the
+          # implementation and its hooks (they don't exist at import time in this plugin).
+          assert plugin.__plugin_check__(), "plugin reports this OctoPrint as incompatible"
+          plugin.__plugin_load__()
+          assert "octoprint.plugin.backup.after_backup" in plugin.__plugin_hooks__, plugin.__plugin_hooks__
+          print("ok", ep.value, plugin.__plugin_implementation__)
           EOF

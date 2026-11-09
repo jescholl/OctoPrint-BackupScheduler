@@ -1,0 +1,12 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["helpers:pinGitHubActionDigestsToSemver"],
+  "dependencyDashboard": true,
+  "rebaseWhen": "conflicted",
+  "packageRules": [
+    {
+      "matchUpdateTypes": ["minor", "patch", "digest"],
+      "automerge": true
+    }
+  ]
+}
